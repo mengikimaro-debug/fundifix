@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="sw">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FundiFix Admin Dashboard</title>
+  <style>
+    :root { --bg:#0d1117; --panel:#151c24; --panel2:#1b2530; --line:#2b3947; --text:#edf4f7; --muted:#9aacb5; --cyan:#55d6e8; --amber:#ffb62e; --green:#43d17b; --red:#ff6b6b; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:radial-gradient(circle at 80% 0%, #173542 0, transparent 38%), var(--bg); color:var(--text); font:14px/1.45 ui-sans-serif,system-ui,sans-serif; }
+    header { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:22px 5vw; border-bottom:1px solid var(--line); background:rgba(13,17,23,.8); backdrop-filter:blur(12px); position:sticky; top:0; z-index:2; }
+    h1,h2,p { margin:0; } h1 { font-size:22px; } h2 { font-size:16px; } .sub { color:var(--muted); margin-top:4px; }
+    main { max-width:1450px; margin:0 auto; padding:28px 5vw 48px; }
+    .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    input,button { border:1px solid var(--line); border-radius:8px; padding:10px 12px; background:var(--panel2); color:var(--text); }
+    input { min-width:230px; } button { cursor:pointer; font-weight:700; } button:hover { border-color:var(--cyan); } .primary { background:var(--cyan); color:#071217; border-color:var(--cyan); }
+    .notice { margin-bottom:18px; padding:12px 14px; border:1px solid var(--line); border-radius:10px; color:var(--muted); background:var(--panel); } .error { color:var(--red); border-color:#743b43; }
+    .stats { display:grid; grid-template-columns:repeat(5,minmax(145px,1fr)); gap:12px; margin:24px 0; }
+    .stat,.panel { background:linear-gradient(145deg,var(--panel2),var(--panel)); border:1px solid var(--line); border-radius:10px; }
+    .stat { padding:18px; } .stat strong { display:block; font-size:30px; margin-top:5px; } .stat small { color:var(--muted); }
+    .layout { display:grid; grid-template-columns:1fr 1.5fr; gap:16px; } .panel { overflow:hidden; } .panel-head { padding:16px 18px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    .scroll { overflow:auto; max-height:650px; } table { width:100%; border-collapse:collapse; min-width:650px; } th,td { padding:12px 14px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; } th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; } td small { color:var(--muted); display:block; }
+    .pill { display:inline-block; padding:4px 8px; border-radius:999px; background:#283640; color:var(--text); font-size:12px; } .pending { color:var(--amber); background:#49391d; } .accepted { color:var(--green); background:#173b2a; } .rejected { color:var(--red); background:#48242b; }
+    .empty { padding:35px; color:var(--muted); text-align:center; } .footer { color:var(--muted); margin-top:18px; font-size:12px; }
+    @media (max-width:900px) { header { align-items:flex-start; flex-direction:column; } .stats { grid-template-columns:repeat(2,1fr); } .layout { grid-template-columns:1fr; } input { width:100%; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div><h1>FundiFix Admin</h1><p class="sub">Ufuatiliaji wa wateja, mafundi na kazi</p></div>
+    <div class="toolbar"><input id="key" type="password" placeholder="Admin key"><button class="primary" id="load">Load dashboard</button></div>
+  </header>
+  <main>
+    <div id="notice" class="notice">Weka admin key kisha bonyeza Load dashboard.</div>
+    <section class="stats">
+      <div class="stat"><small>Watumiaji wote</small><strong id="totalUsers">-</strong></div>
+      <div class="stat"><small>Wateja</small><strong id="clients">-</strong></div>
+      <div class="stat"><small>Mafundi</small><strong id="fundis">-</strong></div>
+      <div class="stat"><small>Kazi zote</small><strong id="totalJobs">-</strong></div>
+      <div class="stat"><small>Pending</small><strong id="pending">-</strong></div>
+    </section>
+    <section class="layout">
+      <article class="panel"><div class="panel-head"><h2>Wateja na mafundi</h2><span id="userCount" class="pill">0</span></div><div class="scroll"><table><thead><tr><th>Jina</th><th>Simu</th><th>Role</th><th>Method</th><th>Joined</th></tr></thead><tbody id="users"></tbody></table></div></article>
+      <article class="panel"><div class="panel-head"><h2>Mwendo wa kazi</h2><span id="jobCount" class="pill">0</span></div><div class="scroll"><table><thead><tr><th>Huduma</th><th>Mteja</th><th>Bei</th><th>Status</th><th>Location / Date</th></tr></thead><tbody id="jobs"></tbody></table></div></article>
+    </section>
+    <p class="footer">Dashboard huonyesha data kutoka MongoDB. Password hash haionyeshwi.</p>
+  </main>
+  <script>
+    const $ = id => document.getElementById(id);
+    const key = $('key');
+    key.value = localStorage.getItem('fundifix_admin_key') || '';
+    $('load').onclick = load;
+    key.onkeydown = event => { if (event.key === 'Enter') load(); };
+    const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const date = value => value ? new Date(value).toLocaleString() : '-';
+    async function load() {
+      const adminKey = key.value.trim();
+      if (!adminKey) return show('Weka admin key kwanza.', true);
+      localStorage.setItem('fundifix_admin_key', adminKey);
+      show('Inapakia dashboard...');
+      try {
+        const response = await fetch(`/admin/overview?key=${encodeURIComponent(adminKey)}`);
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || 'Imeshindikana kupakia dashboard.');
+        render(data); show(`Imesasishwa: ${new Date().toLocaleTimeString()}`);
+      } catch (error) { show(error.message, true); }
+    }
+    function show(message, error=false) { $('notice').textContent = message; $('notice').className = `notice${error ? ' error' : ''}`; }
+    function render(data) {
+      const s = data.stats, statuses = s.jobsByStatus || {};
+      $('totalUsers').textContent = s.totalUsers; $('clients').textContent = s.clients; $('fundis').textContent = s.fundis; $('totalJobs').textContent = s.totalJobs; $('pending').textContent = statuses.pending || 0;
+      $('userCount').textContent = `${data.users.length} records`; $('jobCount').textContent = `${data.requests.length} records`;
+      $('users').innerHTML = data.users.length ? data.users.map(user => `<tr><td><strong>${esc(user.name || 'No name')}</strong></td><td>${esc(user.phone)}</td><td><span class="pill">${esc(user.role)}</span></td><td>${esc(user.method)}</td><td>${date(user.createdAt)}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">Hakuna users.</td></tr>';
+      $('jobs').innerHTML = data.requests.length ? data.requests.map(job => `<tr><td><strong>${esc(job.service)}</strong><small>${esc(job.desc)}</small></td><td>${esc(job.clientPhone)}</td><td>${esc(job.price)}</td><td><span class="pill ${esc(String(job.status).toLowerCase())}">${esc(job.status)}</span></td><td>${esc(job.location || '-')}<small>${date(job.bookingDate)}</small></td></tr>`).join('') : '<tr><td colspan="5" class="empty">Hakuna kazi.</td></tr>';
+    }
+  </script>
+</body>
+</html>

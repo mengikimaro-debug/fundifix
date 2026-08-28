@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "299132984063",
+    "project_id": "fundifix",
+    "storage_bucket": "fundifix.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:299132984063:android:4f91348ebd37ecdfb38aca",
+        "android_client_info": {
+          "package_name": "com.example.myapplication"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYWFHf2Gbqc4o0UjCge8m-Ydwz3HBH19U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

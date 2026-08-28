@@ -1,0 +1,27 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Hexagon Border -->
+    <path
+        android:pathData="M54,18 L91.2,39.5 L91.2,82.5 L54,104 L16.8,82.5 L16.8,39.5 Z"
+        android:strokeColor="#FFA726"
+        android:strokeWidth="6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <!-- Stylized 'F' -->
+    <path
+        android:pathData="M42,74 L42,34 L74,34 M42,54 L66,54"
+        android:strokeColor="#FFA726"
+        android:strokeWidth="10"
+        android:strokeLineCap="round" />
+
+    <!-- Wrench Circle Detail -->
+    <path
+        android:pathData="M42,74 A6,6 0 1,1 42,86 A6,6 0 1,1 42,74"
+        android:fillColor="#FFA726" />
+
+</vector>
