@@ -8,7 +8,7 @@
     :root { --bg:#0d1117; --panel:#151c24; --panel2:#1b2530; --line:#2b3947; --text:#edf4f7; --muted:#9aacb5; --cyan:#55d6e8; --amber:#ffb62e; --green:#43d17b; --red:#ff6b6b; }
     * { box-sizing:border-box; }
     body { margin:0; background:radial-gradient(circle at 80% 0%, #173542 0, transparent 38%), var(--bg); color:var(--text); font:14px/1.45 ui-sans-serif,system-ui,sans-serif; }
-    header { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:22px 5vw; border-bottom:1px solid var(--line); background:rgba(13,17,23,.8); backdrop-filter:blur(12px); position:sticky; top:0; z-index:2; }
+    header { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:22px 5vw; border-bottom:1px solid var(--line); background:rgba(13,17,23,.8); -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px); position:sticky; top:0; z-index:2; }
     h1,h2,p { margin:0; } h1 { font-size:22px; } h2 { font-size:16px; } .sub { color:var(--muted); margin-top:4px; }
     main { max-width:1450px; margin:0 auto; padding:28px 5vw 48px; }
     .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
