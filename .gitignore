@@ -21,3 +21,9 @@ backend/node_modules/
 backend/*.log
 backend/*.err
 backend/*.out
+
+# SSL/TLS Certificates - KEEP PRIVATE!
+backend/certs/
+*.p12
+*.key
+*.csr

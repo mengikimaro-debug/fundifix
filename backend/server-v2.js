@@ -1,5 +1,5 @@
 /**
- * FundiFix Backend Server v2.1 - Enterprise Security & Reliability
+ * FundiFix Backend Server v2.0 - Modernized & Secured
  * 
  * Upgrades:
  * ✅ Security: Helmet + Rate Limiting + Input Validation
@@ -10,10 +10,6 @@
  * ✅ Performance: Database indexes + query optimization
  * ✅ mTLS Support: HTTPS + Mutual TLS
  * ✅ Monitoring: Health checks endpoint
- * ✅ OTP Persistence: MongoDB-backed OTP storage (no data loss on restart)
- * ✅ Phone Authentication: Token-based phone verification on all endpoints
- * ✅ SMS/WhatsApp: Twilio integration with mock fallback
- * ✅ Request Validation: Phone ownership verification for service requests
  */
 
 require('dotenv').config();
@@ -192,29 +188,10 @@ const ServiceRequestSchema = new mongoose.Schema({
 	updatedAt: { type: Date, default: Date.now }
 }, { collection: 'service_requests' });
 
-const OTPRecordSchema = new mongoose.Schema({
-	phone: { type: String, required: true, unique: true, index: true },
-	otpHash: { type: String, required: true },
-	attempts: { type: Number, default: 0 },
-	createdAt: { type: Date, default: Date.now, index: true },
-	expiresAt: { type: Date, required: true, index: true }
-}, { collection: 'otp_records' });
-
-const SessionTokenSchema = new mongoose.Schema({
-	phone: { type: String, required: true, index: true },
-	token: { type: String, required: true, unique: true, index: true },
-	createdAt: { type: Date, default: Date.now, index: true },
-	expiresAt: { type: Date, required: true, index: true }
-}, { collection: 'session_tokens' });
-
 ServiceRequestSchema.index({ clientPhone: 1, createdAt: -1 });
-OTPRecordSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-SessionTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 const User = mongoose.model('User', UserSchema);
 const ServiceRequest = mongoose.model('ServiceRequest', ServiceRequestSchema);
-const OTPRecord = mongoose.model('OTPRecord', OTPRecordSchema);
-const SessionToken = mongoose.model('SessionToken', SessionTokenSchema);
 
 // ===========================
 // UTILITIES
@@ -249,123 +226,39 @@ function hashOTP(otp) {
 	return crypto.createHash('sha256').update(otp).digest('hex');
 }
 
-function generateSessionToken() {
-	return crypto.randomBytes(32).toString('hex');
+const otps = new Map();
+
+function saveOTP(phone, otp) {
+	const now = Date.now();
+	const normalizedPhone = normalizePhone(phone);
+	otps.set(normalizedPhone, { hash: hashOTP(otp), createdAt: now, expiresAt: now + OTP_EXPIRY_MS, attempts: 0 });
 }
 
-// Persistent OTP storage using MongoDB
-async function saveOTP(phone, otp) {
+function verifyOTP(phone, otp) {
 	const normalizedPhone = normalizePhone(phone);
-	const expiresAt = new Date(Date.now() + OTP_EXPIRY_MS);
-	await OTPRecord.updateOne(
-		{ phone: normalizedPhone },
-		{ otpHash: hashOTP(otp), attempts: 0, createdAt: new Date(), expiresAt },
-		{ upsert: true }
-	);
-}
-
-async function verifyOTP(phone, otp) {
-	const normalizedPhone = normalizePhone(phone);
-	const record = await OTPRecord.findOne({ phone: normalizedPhone });
+	const record = otps.get(normalizedPhone);
 	if (!record) return { success: false, message: 'OTP haipo. Omba OTP mpya.' };
-	if (new Date() > record.expiresAt) {
-		await OTPRecord.deleteOne({ phone: normalizedPhone });
-		return { success: false, message: 'OTP ime-expire' };
-	}
-	if (record.attempts >= MAX_ATTEMPTS) {
-		await OTPRecord.deleteOne({ phone: normalizedPhone });
-		return { success: false, message: 'Majaribio mengi' };
-	}
-	if (hashOTP(otp) !== record.otpHash) {
-		await OTPRecord.updateOne({ phone: normalizedPhone }, { attempts: record.attempts + 1 });
-		return { success: false, message: 'OTP sio sahihi' };
-	}
-	await OTPRecord.deleteOne({ phone: normalizedPhone });
+	if (Date.now() > record.expiresAt) { otps.delete(normalizedPhone); return { success: false, message: 'OTP ime-expire' }; }
+	if (record.attempts >= MAX_ATTEMPTS) { otps.delete(normalizedPhone); return { success: false, message: 'Majaribio mengi' }; }
+	record.attempts++;
+	if (hashOTP(otp) !== record.hash) return { success: false, message: 'OTP sio sahihi' };
+	otps.delete(normalizedPhone);
 	return { success: true, message: 'OTP Sahihi' };
-}
-
-// Session token management
-async function createSessionToken(phone) {
-	const normalizedPhone = normalizePhone(phone);
-	const token = generateSessionToken();
-	const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
-	await SessionToken.create({ phone: normalizedPhone, token, expiresAt });
-	return token;
-}
-
-async function verifySessionToken(phone, token) {
-	const normalizedPhone = normalizePhone(phone);
-	const record = await SessionToken.findOne({ phone: normalizedPhone, token });
-	if (!record) return false;
-	if (new Date() > record.expiresAt) {
-		await SessionToken.deleteOne({ _id: record._id });
-		return false;
-	}
-	return true;
 }
 
 async function sendSMS(phone, otp) {
 	const normalizedPhone = normalizePhone(phone);
-	try {
-		if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE) {
-			// Production: Use Twilio
-			const twilio = require('twilio');
-			const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-			await client.messages.create({
-				body: `FundiFix OTP: ${otp}. Inatumika kwa 5 dakika.`,
-				from: process.env.TWILIO_PHONE,
-				to: normalizedPhone
-			});
-			logger.info('📱 SMS OTP Sent via Twilio', { phone: normalizedPhone });
-			return { success: true, mock: false };
-		}
-	} catch (err) {
-		logger.error('SMS Twilio Error:', err.message);
-	}
-	// Fallback to mock
-	logger.info('📱 SMS OTP Sent (Mock)', { phone: normalizedPhone, otp });
-	return { success: true, mock: true, otp };
+	const useMockOtp = process.env.SMS_PROVIDER === 'mock' || process.env.NODE_ENV !== 'production';
+	logger.info('📱 SMS OTP Sent', { phone: normalizedPhone, otp: useMockOtp ? otp : '[hidden]' });
+	return { success: true, mock: useMockOtp, otp: useMockOtp ? otp : undefined };
 }
 
 async function sendWhatsApp(phone, otp) {
 	const normalizedPhone = normalizePhone(phone);
-	try {
-		if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_WHATSAPP_PHONE) {
-			// Production: Use Twilio WhatsApp
-			const twilio = require('twilio');
-			const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-			await client.messages.create({
-				body: `🔐 FundiFix OTP: ${otp}\nInatumika kwa 5 dakika tu.`,
-				from: `whatsapp:${process.env.TWILIO_WHATSAPP_PHONE}`,
-				to: `whatsapp:${normalizedPhone}`
-			});
-			logger.info('💬 WhatsApp OTP Sent via Twilio', { phone: normalizedPhone });
-			return { success: true, mock: false };
-		}
-	} catch (err) {
-		logger.error('WhatsApp Twilio Error:', err.message);
-	}
-	// Fallback to mock
-	logger.info('💬 WhatsApp OTP Sent (Mock)', { phone: normalizedPhone, otp });
-	return { success: true, mock: true, otp };
+	const useMockOtp = process.env.WHATSAPP_PROVIDER === 'mock' || process.env.NODE_ENV !== 'production';
+	logger.info('💬 WhatsApp OTP Sent', { phone: normalizedPhone, otp: useMockOtp ? otp : '[hidden]' });
+	return { success: true, mock: useMockOtp, otp: useMockOtp ? otp : undefined };
 }
-
-// Phone authentication middleware
-const requirePhoneAuth = async (req, res, next) => {
-	try {
-		const authHeader = req.get('x-phone-auth') || req.get('Authorization')?.replace('Bearer ', '');
-		const phone = req.get('x-phone');
-		if (!authHeader || !phone) {
-			return res.status(401).json({ success: false, message: 'Inachohitajika: x-phone + x-phone-auth headers' });
-		}
-		const isValid = await verifySessionToken(phone, authHeader);
-		if (!isValid) {
-			return res.status(401).json({ success: false, message: 'Tokeni sio sahihi au ime-expire' });
-		}
-		req.userPhone = normalizePhone(phone);
-		next();
-	} catch (err) { next(err); }
-};
 
 // ===========================
 // API ROUTES
@@ -415,18 +308,13 @@ app.post('/login', authLimiter, validate(loginSchema), async (req, res, next) =>
 	} catch (err) { next(err); }
 });
 
-app.post('/submit-request', requirePhoneAuth, async (req, res, next) => {
+app.post('/submit-request', async (req, res, next) => {
 	try {
 		const { clientPhone, service, desc, location, bookingDate } = req.body;
 		if (!clientPhone || !service || !location) return res.status(400).json({ success: false, message: 'Maelezo hayajajaza' });
-		// Verify phone ownership - user can only submit for themselves
-		const normalizedClientPhone = normalizePhone(clientPhone);
-		if (normalizedClientPhone !== req.userPhone) {
-			return res.status(403).json({ success: false, message: 'Unaweza kuomba tu kwa namba yako.' });
-		}
-		const request = new ServiceRequest({ id: crypto.randomUUID(), service, desc, clientPhone: normalizedClientPhone, location, bookingDate, status: 'pending' });
+		const request = new ServiceRequest({ id: crypto.randomUUID(), service, desc, clientPhone, location, bookingDate, status: 'pending' });
 		await request.save();
-		logger.info('Service request submitted', { phone: normalizedClientPhone, service });
+		logger.info('Service request submitted', { phone: clientPhone });
 		res.status(201).json({ success: true, message: 'Ombi limepokelewa', requestId: request.id });
 	} catch (err) { next(err); }
 });
@@ -438,56 +326,35 @@ app.get('/active-requests', async (req, res, next) => {
 	} catch (err) { next(err); }
 });
 
-app.get('/client-requests/:phone', requirePhoneAuth, async (req, res, next) => {
+app.get('/client-requests/:phone', async (req, res, next) => {
 	try {
-		const normalizedPhone = normalizePhone(req.params.phone);
-		// Users can only view their own requests (or admin)
-		if (normalizedPhone !== req.userPhone && !isAdminRequest(req)) {
-			return res.status(403).json({ success: false, message: 'Unaweza kuona tu maombi yako.' });
-		}
-		const requests = await ServiceRequest.find({ clientPhone: normalizedPhone }).sort({ createdAt: -1 }).lean();
+		const requests = await ServiceRequest.find({ clientPhone: req.params.phone }).sort({ createdAt: -1 }).lean();
 		res.json(requests);
 	} catch (err) { next(err); }
 });
 
-app.post('/accept-request/:id', requirePhoneAuth, async (req, res, next) => {
+app.post('/accept-request/:id', async (req, res, next) => {
 	try {
-		const result = await ServiceRequest.findOneAndUpdate(
-			{ id: req.params.id },
-			{ status: 'accepted', acceptedBy: req.userPhone, updatedAt: new Date() },
-			{ new: true }
-		);
+		const result = await ServiceRequest.findOneAndUpdate({ id: req.params.id }, { status: 'accepted' }, { new: true });
 		if (!result) return res.status(404).json({ success: false, message: 'Kazi haijapatikana' });
-		logger.info('Service request accepted', { requestId: req.params.id, fundisPhone: req.userPhone });
 		res.json({ success: true, message: 'Kazi imekubaliwa', data: result });
 	} catch (err) { next(err); }
 });
 
-app.post('/reject-request/:id', requirePhoneAuth, async (req, res, next) => {
+app.post('/reject-request/:id', async (req, res, next) => {
 	try {
-		const result = await ServiceRequest.findOneAndUpdate(
-			{ id: req.params.id },
-			{ status: 'rejected', updatedAt: new Date() },
-			{ new: true }
-		);
+		const result = await ServiceRequest.findOneAndUpdate({ id: req.params.id }, { status: 'rejected' }, { new: true });
 		if (!result) return res.status(404).json({ success: false, message: 'Kazi haijapatikana' });
-		logger.info('Service request rejected', { requestId: req.params.id, fundisPhone: req.userPhone });
 		res.json({ success: true, message: 'Kazi imekataliwa' });
 	} catch (err) { next(err); }
 });
 
-app.post('/update-request-price/:id', requirePhoneAuth, async (req, res, next) => {
+app.post('/update-request-price/:id', async (req, res, next) => {
 	try {
 		const { price } = req.body;
 		if (!price || isNaN(price)) return res.status(400).json({ success: false, message: 'Bei sio sahihi' });
-		// Only fundis who accepted can update price
-		const request = await ServiceRequest.findOne({ id: req.params.id });
-		if (!request) return res.status(404).json({ success: false, message: 'Kazi haijapatikana' });
-		if (request.acceptedBy !== req.userPhone && !isAdminRequest(req)) {
-			return res.status(403).json({ success: false, message: 'Unaweza kusasisha bei kwa kazi uliyokubali tu.' });
-		}
-		const result = await ServiceRequest.findOneAndUpdate({ id: req.params.id }, { price: String(price), updatedAt: new Date() }, { new: true });
-		logger.info('Service request price updated', { requestId: req.params.id, fundisPhone: req.userPhone, price });
+		const result = await ServiceRequest.findOneAndUpdate({ id: req.params.id }, { price: String(price) }, { new: true });
+		if (!result) return res.status(404).json({ success: false, message: 'Kazi haijapatikana' });
 		res.json({ success: true, message: 'Bill imesasishwa', data: result });
 	} catch (err) { next(err); }
 });
@@ -498,7 +365,7 @@ app.post('/auth/sms/send', otpLimiter, validate(phoneSchema), async (req, res, n
 		const { phone } = req.validated;
 		const normalizedPhone = normalizePhone(phone);
 		const otpCode = generateOTP();
-		await saveOTP(normalizedPhone, otpCode);
+		saveOTP(normalizedPhone, otpCode);
 		const smsResult = await sendSMS(normalizedPhone, otpCode);
 		res.json({
 			success: true,
@@ -514,7 +381,7 @@ app.post('/auth/whatsapp/send', otpLimiter, validate(phoneSchema), async (req, r
 		const { phone } = req.validated;
 		const normalizedPhone = normalizePhone(phone);
 		const otpCode = generateOTP();
-		await saveOTP(normalizedPhone, otpCode);
+		saveOTP(normalizedPhone, otpCode);
 		const waResult = await sendWhatsApp(normalizedPhone, otpCode);
 		res.json({
 			success: true,
@@ -525,41 +392,27 @@ app.post('/auth/whatsapp/send', otpLimiter, validate(phoneSchema), async (req, r
 	} catch (err) { next(err); }
 });
 
-app.post('/auth/sms/verify', validate(otpSchema), async (req, res, next) => {
-	try {
-		const { phone, otp } = req.validated;
-		const normalizedPhone = normalizePhone(phone);
-		const result = await verifyOTP(normalizedPhone, otp);
-		if (result.success) {
-			const token = await createSessionToken(normalizedPhone);
-			logger.info('SMS OTP verified', { phone: normalizedPhone });
-			return res.json({ success: true, message: 'OTP Sahihi', phone: normalizedPhone, token });
-		}
-		res.status(400).json(result);
-	} catch (err) { next(err); }
+app.post('/auth/sms/verify', validate(otpSchema), (req, res) => {
+	const { phone, otp } = req.validated;
+	const normalizedPhone = normalizePhone(phone);
+	const result = verifyOTP(normalizedPhone, otp);
+	res.status(result.success ? 200 : 400).json(result);
 });
 
-app.post('/auth/whatsapp/verify', validate(otpSchema), async (req, res, next) => {
-	try {
-		const { phone, otp } = req.validated;
-		const normalizedPhone = normalizePhone(phone);
-		const result = await verifyOTP(normalizedPhone, otp);
-		if (result.success) {
-			const token = await createSessionToken(normalizedPhone);
-			logger.info('WhatsApp OTP verified', { phone: normalizedPhone });
-			return res.json({ success: true, message: 'OTP Sahihi', phone: normalizedPhone, token });
-		}
-		res.status(400).json(result);
-	} catch (err) { next(err); }
+app.post('/auth/whatsapp/verify', validate(otpSchema), (req, res) => {
+	const { phone, otp } = req.validated;
+	const normalizedPhone = normalizePhone(phone);
+	const result = verifyOTP(normalizedPhone, otp);
+	res.status(result.success ? 200 : 400).json(result);
 });
 
-app.post('/auth/otp/resend', otpLimiter, validate(phoneSchema), async (req, res, next) => {
+app.post('/auth/otp/resend', validate(phoneSchema), async (req, res, next) => {
 	try {
 		const { phone } = req.validated;
 		const normalizedPhone = normalizePhone(phone);
 		const { method = 'sms' } = req.body;
 		const otpCode = generateOTP();
-		await saveOTP(normalizedPhone, otpCode);
+		saveOTP(normalizedPhone, otpCode);
 		const resendResult = await (method === 'whatsapp' ? sendWhatsApp(normalizedPhone, otpCode) : sendSMS(normalizedPhone, otpCode));
 		res.json({
 			success: true,
@@ -570,14 +423,11 @@ app.post('/auth/otp/resend', otpLimiter, validate(phoneSchema), async (req, res,
 	} catch (err) { next(err); }
 });
 
-// Database cleanup - MongoDB TTL indexes handle automatic cleanup
-setInterval(async () => {
-	try {
-		const now = new Date();
-		await OTPRecord.deleteMany({ expiresAt: { $lt: now } });
-		await SessionToken.deleteMany({ expiresAt: { $lt: now } });
-	} catch (err) {
-		logger.error('Cleanup error:', err.message);
+// OTP Cleanup
+setInterval(() => {
+	const now = Date.now();
+	for (const [phone, record] of otps) {
+		if (now > record.expiresAt) otps.delete(phone);
 	}
 }, 60 * 1000);
 
